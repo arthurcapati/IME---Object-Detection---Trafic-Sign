@@ -1,0 +1,307 @@
+% Definição da classe do documento
+\documentclass[12pt, a4paper]{article}
+
+% --- Pacotes essenciais ---
+\usepackage[utf8]{inputenc}    % Para o uso de caracteres especiais (acentos, ç, etc.)
+\usepackage[portuguese]{babel} % Para o suporte e hifenização em português
+\usepackage{amsmath}           % Para melhor suporte a fórmulas matemáticas
+\usepackage{graphicx}          % Para inclusão de imagens
+\usepackage{geometry}          % Para controle das margens
+\usepackage{hyperref}          % Para links clicáveis no PDF
+\usepackage{biblatex}
+\addbibresource{referencias.bib}
+
+% Configuração das margens (Exemplo: 3cm superior/esquerdo, 2cm inferior/direito)
+\geometry{
+    top=3cm,
+    bottom=2cm,
+    left=3cm,
+    right=2cm,
+    includeheadfoot
+}
+
+% --- Informações do Relatório ---
+\title{Yolo v11 para detecção de placas de trânsito}
+\author{Arthur Gabriel Capati \\ Aluno Especial Pós - 13700381}
+\date{\today} % Usa a data atual ou pode ser definido como \date{07 de Outubro de 2025}
+
+\begin{document}
+
+% Gera a página de título (com base nos comandos \title, \author e \date)
+\maketitle
+
+% --- Sumário (Tabela de Conteúdo) ---
+% O comando \tableofcontents deve ser colocado onde você quer que o sumário apareça
+\tableofcontents
+
+\newpage % Quebra de página antes de começar o conteúdo principal
+
+% --- Resumo ---
+% Em relatórios mais simples (classe article), usa-se o ambiente abstract
+\begin{abstract}
+Este relatório descreve o meu processo de aprendizado e experimentação com o uso de Yolo para detecção de placas de trânsito. 
+Aqui, descrevo o funcionamento do dataset no ambiente do Yolo, o processo de treinamento do modelo, um processo de otimização, além de utilizar o EigenCAM para explicabilidade do modelo e por fim, testar o modelo em imagens reais. 
+O modelo final, foi treinado com os valores padrões do Yolo v11n, devido a limitações computacionais observadas durante o processo de otimização.
+A explicabilidade indica que o modelo é capaz de focalizar em regiões corretas, ainda que com alguns focos em regições que não deveriam ser relevantes.
+O modelo se mostrou capaz de generalizar razoavelmente bem, para poucos exemplos, com imagens retiradas com um celular, acertando corretamente semaforos e placas de "PARE", ainda que tenha acertado apenas uma placa de velocidade.
+
+\end{abstract}
+
+% --- Conteúdo do Relatório ---
+
+\section{Entendendo o funcionamento do Yolo v11}
+
+Inicialmente, gostaria de entender o funcionamento do Yolo frente a como os dados estão estruturados dentro do Dataset.
+Para isso, utilizei a \href{https://docs.ultralytics.com/datasets/#steps-to-contribute-a-new-dataset}{documentação oficial} da Ultralytics \cite{doc_dataset}, além de um artigo do \href{https://medium.com/@estebanuri/training-yolov11-object-detector-on-a-custom-dataset-39bba09530ff}{Medium} \cite{dataset_medium} e do \href{https://blog.roboflow.com/yolov11-how-to-train-custom-data/}{Roboflow} \cite{dataset_roboflow} para entender a estrutura dos dados.
+
+Aqui, entendi que o dataset está estruturado em pastas de treinamento, validação e teste, contendo as imagens e arquivos de texto com as anotações. 
+Cada linha do arquivo de texto corresponde a um objeto na imagem e o bounding box desses objetos. 
+Todo o dataset está configurado em um arquivo YAML, que informa onde estão as pastas de imagens, quantas classes existem e os nomes dessas classes.
+
+O exemplo abaixo ilustra a estrutura do dataset:
+\begin{verbatim}
+dataset/
+    train/
+        images/
+            image1.jpg
+            image2.jpg
+            ...
+        labels/
+            image1.txt
+            image2.txt
+            ...
+    valid/
+        images/
+            image1.jpg
+            image2.jpg
+            ...
+        labels/
+            image1.txt
+            image2.txt
+            ...
+    test/
+        images/
+            image1.jpg
+            image2.jpg
+            ...
+        labels/
+            image1.txt
+            image2.txt
+            ...
+\end{verbatim}
+
+\subsection{Dataset}
+
+O dataset utilizado foi o indicado na tarefa, disponível no link: \href{https://www.kaggle.com/datasets/pkdarabi/cardetection}{Kaggle - Traffic Signs Detection} \cite{dataset_kaggle}.
+
+Aqui, as imagens ja estão divididas nas pastas de treinamento, validação e teste como no exemplo acima.
+Portanto, o treinamento do modelo pode ser feito diretamente, sem a necessidade de tratar o dataset de alguma maneira.
+
+Aqui, para entender o dataset, utilizei como base o código de um dos notebooks presentes no \href{https://www.kaggle.com/code/guntasdhanjal/traffic-sign-detection-with-yolov11}{kaggle} \cite{notebook_kaggle} com algumas modificações.
+Na imagem \ref{fig:target-exemples} vemos um exemplo das imagens contidas no dataset de teste com os seus respectivos boxs de detecção.
+Essas imagens foram escolhidas por apresentar exemplos variados de semaforos, algo que julgo importante que o modelo acerte, devido a questões de segurança do trânsito, bem como a placa de "STOP", que gostaria de entender se o modelo seria capaz de generalizar para o Brasil e exemplo de placas de velocidade.
+Ainda, nessas imagens existem complexidades, como semaforos a longa distancia, semaforos para pedestres e/ou objetos que parecem semaforos mas que estão sem boxes.
+
+\begin{figure}
+    \centering
+    \includegraphics[width=0.8\textwidth]{images/target_images.png} % Substitua pelo caminho da sua imagem
+    \caption{Imagens de Referencias com seus respectivos boxes de detecção}
+    \label{fig:target-exemples} 
+\end{figure}
+
+Outro entendimento do dataset é a distribuição das classes presentes no dataset.
+Na figura \ref{fig:classes-distribution}, vemos que as classes mais presentes são a 0 e a 1, que correspondem aos semáforos verde e vermelho, respectivamente.
+Outro ponto interessante é que a classe 2, correspondente a placa de velocidade de 10 km/h é a menos presente e de maneira expressiva, com menos de 50 anotações.
+Não irei focar em analizar o impacto desse desbalanceamento no modelo, mas é um ponto interessante a ser levantado para possiveis aplicações.
+
+Outro ponto é a classe 14, que corresponde a placa de "Stop" ou "Pare" em inglês.
+Aqui, gostaria de entender se o modelo seria capaz de aprender a capturar essa placa aqui no Brasil, onde a escrita é diferente embora tenha a mesmas cores (vermelho e branco).
+Veremos isso no capitulo \ref{sec:generalizacao}.
+
+\begin{figure}
+    \centering
+    \includegraphics[width=0.8\textwidth]{images/distribution_of_classes.png} % Substitua pelo caminho da sua imagem
+    \caption{Distribuição das classes no dataset de treinamento}
+    \label{fig:classes-distribution} 
+\end{figure}
+
+\section{Treinamento do Modelo}
+\label{sec:treinamento}
+
+Todo o treinamento foi realizado em um ambiente local, com uma GPU NVIDIA GTX 1660 de 6Gb de VRAM.
+
+Segui o treinamento com os valores padrões do Yolo v11n (menor modelo disponível), por 30 épocas, com um imagens de tamanho 640x640, batch size de 4 e workers de 2.
+O treinamento demorou cerca de 1 hora para ser concluído.
+
+Aqui, mantive a imagem de entrada no tamanho de 640x640, pois imaginei que tamanhos menores poderiam prejudicar a detecção de objetos distantes, e uma vez que as placas são relativamente pequenas e distantes, isso poderia ser um problema para o modelo.
+Além disso, o batch size foi mantido em 4 com workers de 2, pois a VRAM da GPU não suportava valores maiores.
+
+\subsection{Resultados do Treinamento}
+
+Aqui, vemos os resultados do treinamento do modelo na figura \ref{fig:initial-training-results}.
+Vemos inicialmente que a box loss e a class loss diminuem ao longo do treinamento e ambos parecem apresentar uma tendencia de diminuição, o que indica que manter o treinamento por mais tempo é uma boa forma de melhorar a performance do modelo.
+Além disso, vendo o comportamento da precisão e do recall, vemos que a precisão chegou a alcançar valores próximos a 95\% já com cerca de 20 épocas e o recall valores próximos de 90\% com uma tentencia de continuar crescendo com mais épocas.
+E por ultimo, o mAP50 também apresenta uma boa performance, chegando a valores próximos de 90\% um indicativo que o modelo é capaz de detectar os objetos mais mais \href{https://docs.ultralytics.com/guides/yolo-performance-metrics/}{fáceis} \cite{ultralytics_metrics} e com um mAP50-95 com cerca de 80\%, o que indica que o modelo também é capaz de detectar objetos mais difíceis, embora com uma performance menor. 
+
+\begin{figure}
+    \centering
+    \includegraphics[width=0.9\textwidth]{images/results_initial_train.png} % Substitua pelo caminho da sua imagem
+    \caption{Resultados do treinamento}
+    \label{fig:initial-training-results}
+\end{figure}
+
+Vemos as respostas do modelo para imagens de teste na figura \ref{fig:initial-test-results}.
+Aqui, vemos que o modelo foi capaz de detectar os semáforos verdes na primeira imagem, embora não tenha capturado os semaforos vermelhos mais distantes.
+Na segunda imagem, o modelo foi capaz de detectar o semáforo vermelho e a placa de limite de velocidade , ignorando as placas que não estão presentes no dataset.
+
+Já para a terceira imagem, o modelo capturou a placa de "Pare" e o farol vermelho, e adicionou uma segunda box de farol vermelho em no semáforo para pedestres que está no verde.
+E por ultimo, na quarta imagem, o modelo capturou o semáforo vermelho que está marcado, além de adicionar um box em um outro semáforo sem a marcação.
+
+\begin{figure}
+    \centering
+    \includegraphics[width=0.8\textwidth]{images/tests_initial_train.png} % Substitua pelo caminho da sua imagem
+    \caption{Detecção para imagens de teste}
+    \label{fig:initial-test-results}
+\end{figure}
+
+A ultima visão que avalio é a partir da matriz de confusão normalizado, mostrado na figura \ref{fig:initial-confusion-matrix}.
+Aqui, vemos que o modelo foi capaz de classificar corretamente a maioria das classes, embora tenha certa dificuldade com os semaforos verde e vermelho, com 0.8 e 0.76 na matriz. 
+Isso contrasta com a quantidade de exemplos dessas classes no dataset, que são as mais presentes.
+Além disso, o modelo acaba por confundir os semaforos apenas com o background e comparativamente as outras classes apresentam as maiores confuções com o fundo. 
+
+\begin{figure}
+    \centering
+    \includegraphics[width=0.9\textwidth]{images/initial_confusion_matrix_normalized.png} % Substitua pelo caminho da sua imagem
+    \caption{Matriz de confusão normalizado para o modelo inicial}
+    \label{fig:initial-confusion-matrix}
+\end{figure}
+
+
+\section{Otimização do Modelo}
+\label{sec:otimizacao}
+
+Visando otimizar o modelo, realizei um experimento de otimização dos hiperparâmetros do modelo com a função de otimização da \href{https://docs.ultralytics.com/guides/hyperparameter-tuning/}{Ultralytics} \cite{ultralytics_otimization}.
+O espaço de busca foi realizado em cima dos parametros de augmentation $($ degrees, hsv\_h, hsv\_s, hsv\_v, translate, scale, shear, perspective $)$ e learning rate, com 70 iterações.
+
+
+Na figura \ref{fig:tune-fitness-1} vemos que na média o fitness está melhorando, embora com um passo lento.
+Como o treinamento de cada iteração demora cerca de 1 hora, com as 70 iterações o processo demorou cerca de 3 dias para ser concluído e se tornando inviavel computacionalmente para o meu computador.
+Imaginei que por estar realizando a otimização em cima de diversos hiperparâmetros, o espaço de busca poderia ser grande o suficiente para que o processo fosse muito demorado.
+
+\begin{figure}
+    \centering
+    \includegraphics[width=0.8\textwidth, height=0.2\textheight]{images/tune_fitness1.png} % Substitua pelo caminho da sua imagem
+    \caption{Fitness ao longo das iterações de otimização}
+    \label{fig:tune-fitness-1}
+\end{figure}
+
+Portanto, decidi realizar uma nova otimização, mas agora apenas em cima do learning rate, do degree e do hue $($hsv\_h$)$.
+Minha escolha por esses hiperparâmetros foi baseada na ideia de que o de ajustar o espaço de cores pudesse ajudar o modelo a generalizar melhor as diferenças nos semáforos.
+Já o degree, imaginei que poderia ajudar o modelo a capturar melhor os semáforos fornecendo pequenas rotações.
+
+Aqui, o processo de otimização foi feito por 10 épocas e 70 iterações. 
+Vemos o resultado na figura \ref{fig:tune-fitness-2}, onde o mesmo padrão de melhora no fitness é observado, mas de maneira lenta.
+Também não é observado um grande salto ou uma melhora significativa, o que indica que seriam necessárias mais iterações para que a otimização fosse efetiva.
+
+\begin{figure}
+    \centering
+    \includegraphics[width=0.8\textwidth, height=0.2\textheight]{images/tune_fitness2.png} % Substitua pelo caminho da sua imagem
+    \caption{Fitness ao longo das iterações de otimização}
+    \label{fig:tune-fitness-2}
+\end{figure}
+
+Portanto, decidi que realizar a otimização do modelo não seria viável computacionalmente com a minha placa de vídeo, e optei por realizar uma ultima tentativa de otimizar, mas de maneira manual.
+Aqui, percebi que pelo modelo estar errando os semáforos mais distantes, trabalhar em cima do hiperparâmetro de escala poderia ser uma boa forma.
+Portanto, realizei um novo treinamento do modelo, variando o hiperparâmetro de scale para 0.4, 0.6 e 0.7, mantendo os outros hiperparâmetros com os valores padrões do Yolo v11n.
+
+Realizei o treinamento por 30 épocas, seguindo como base o modelo treinado inicialmente.
+Os resultados são sumarizados na tabela \ref{tab:results-comparison}.
+Aqui, vemos que o modelo inicial apresentou o melhor resultado para o farol verde. 
+Já o modelo com scale 0.6 apresentou o melhor resultado para o farol vermelho.
+E todos apresentaram resultados muito próximos para a placa de "Stop".
+
+Com isso, optei por continuar com o modelo inicial, uma vez que ele apresenta resultados satisfatórios e o processo de otimização não se mostrou viável com o recurso computacional.
+
+\begin{table}[h!]
+    \centering
+    \begin{tabular}{|c|c|c|c|}
+    \hline
+    \textbf{Scale} & \textbf{Farol Verde} & \textbf{Farol Vermelho} & \textbf{Stop} \\ \hline
+    0.4            & 0.78              & 0.78            & 0.95     \\ \hline
+    0.5 (inicial)           & 0.8              & 0.78            & 0.99           \\ \hline
+    0.6            & 0.75              & 0.81            & 0.99           \\ \hline
+    0.7            & 0.76              & 0.77            & 1.00           \\ \hline
+    \end{tabular}
+    \caption{Comparação dos resultados na matrix de confusão}
+    \label{tab:results-comparison}
+\end{table}
+
+\section{AI Explainability - EigenCAM}
+\label{sec:explainability}
+
+A explicabilidade do modelo foi realizada com a técnica de \href{https://github.com/jacobgil/pytorch-grad-cam}{EigenCAM} \cite{pytorch_cam}, uma vez que ela observa a ativação da imagem como um todo e não para uma categoria apenas.
+Isso é interessante para entender onde o modelo está focalizando para os seus resultados. O código utilizado foi baseado em uma implementação exemplar para o \href{https://jacobgil.github.io/pytorch-gradcam-book/EigenCAM%20for%20YOLO5.html}{yolo v5} \cite{notebook_yolov5_cam}.
+
+Para as imagens de teste, observadas na figura \ref{fig:explainability-results}, vemos na primeira imagem que o modelo efetivamente esta olhando para os farois verdes categorizados e embora não categorize os semaforos vermelhos distantes, ele da peso a essa região.
+Ja na segunda imagem, o modelo olha para a placa de limite de velocidade como o esperado, mas também tem uma grande ativação para o que parece ser o semaforo abaixo, dando foco principalmente na região da luz verde.
+
+Na terceira imagem, o modelo da foco na placa de "STOP", e no semafóro vermelho abaixo de maneira correta, mas ainda assim, gera uma saida de outro farol vermelho no que seria o semaforo de pedestres.
+E por ultimo, na quarta imagem, vemos que o modelo da certo foco para o semáforo vermelho categorizado, mas também olha para o semáforo não categorizado, mas o mais surpreendente é a ativação fortissima para algumas janelas e placas, principalmente na parte direita da imagem.
+Esse comportamento se alinha com o observado na matriz de confusão, onde o modelo apresenta certa dificuldade em distringuir os semáforos do fundo.
+
+Esse ponto poderia ser aprofundado e observado se após mais épocas de treinamento o modelo continuaria a apresentar esse comportamento.
+Entretanto, acredito que se trate de existencia de um contrate entre o preto e o vermelho, como observado na região das janelas. 
+
+\begin{figure}
+    \centering
+    \includegraphics[width=0.8\textwidth]{images/eighncam_images.png} % Substitua pelo caminho da sua imagem
+    \caption{Resultados do EigenCAM para imagens de teste}
+    \label{fig:explainability-results}
+\end{figure}
+
+Um ponto interessante é que o modelo parece não olhar para as regiões dos objetos quando há um foco muito forte nos próprios objetos.
+Isso é observado na figura \ref{fig:explainability-results-2}, onde da foco para as regiões superiores das imagens, mas não para as regiões dos objetos em si, com excessão a primeira imagem onde há uma certa divisão do foco.
+\begin{figure}
+    \centering
+    \includegraphics[width=0.8\textwidth]{images/eighncam_images_focused.png} % Substitua pelo caminho da sua imagem
+    \caption{Resultados do EigenCAM para imagens de teste}
+    \label{fig:explainability-results-2}
+\end{figure}
+
+\section{Resultados em Imagens Reais}
+\label{sec:generalizacao}
+Durante esse periodo, fui realizando foto de placas e semaforos que encontrava em meu dia a dia.
+A ideia era entender se o modelo seria capaz de generalizar para a placa de "PARE" aqui no Brasil, bem como entender se seria possivel a sua utilização em imagens reais.
+Os resultados são mostrados na figura \ref{fig:real-world-results}.
+
+Aqui vemos que o modelo foi capaz de detectar a placa de "PARE", mesmo com a diferença de linguam, um indicativo que o modelo observa o contraste entre o vermelho e o branco da placa. 
+Ja na segunda imagem, o modelo conseguiu detectar o semáforo vermelho, mas falhou na detecção da placa de limite de velocidade em 50 km/h.
+
+A terceira imagem apresenta um limite de velocidade de 10 km/h no estacionamento e que foi detectada com sucesso.
+A quarta imagem apresenta dois faróis vermelhos, mas o modelo foi capaz de detectar apenas um deles, mesmo que com uma consideravel distância o que contrasta com o observado nas imagens de teste.
+
+Na quinta imagem, que é uma imagem sequencia da quarta, o modelo não foi capaz de detectar o semáforo verde, mesmo que ela tenha uma condição próxima da quarta imagem. 
+Ja na sexta imagem, de placas de velocidade em uma estrada, o modelo não foi capaz de detectar nenhuma das 4 placas de limite de velocidade.
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[height=0.6\textheight]{images/real_world_images.png} % Substitua pelo caminho da sua imagem
+    \caption{Resultados do modelo em imagens reais}
+    \label{fig:real-world-results}
+\end{figure}
+
+\section{Conclusão}
+\label{sec:conclusao}
+
+O modelo Yolo v11n se mostrou eficaz na detecção de placas de trânsito, ainda que com as condições de treinamento iniciais.
+O processo de otimização dos hiperparâmetros não se mostrou viável computacionalmente e não consegui identificar uma maneira manual de melhorar os parametros inicias.
+
+A explicabilidade do modelo, com a técnica de EigenCAM, mostrou que o modelo é capaz de focalizar nas regiões corretas, ainda que focalizando em outras regições que não deveriam ser relevantes como placas de negócios e janelas.
+Ainda, não é capaz de focalizar nas regiões dos objetos quando há um foco maior nos objetos.
+
+O modelo se mostrou capaz de generalizar razoavelmente bem para imagens reais, ainda que não tenha quase nenhuma placa de velocidade.
+Entretanto, o modelo apresentou a deteção correta de uma placa de "PARE" e apenas uma falha em semáforos vermelhos.
+
+\printbibliography
+
+\end{document}
