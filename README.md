@@ -1,4 +1,4 @@
-# IME---Object-Detection---Trafic-Sign
+# IME - Object-Detection - Trafic Sign
 
 Este repositório contém uma atividade desenvolvida para a disciplina de Deep Learning no IME. O trabalho utiliza a arquitetura YOLO v11 para detecção de objetos (placas de trânsito) e foi treinado/avaliado com um dataset público disponível no [Kaggle](https://www.kaggle.com/datasets/pkdarabi/cardetection/data) e utiliza EigenCAM como ferramenta de explicabilidade.
 
